@@ -1,1 +1,0 @@
-# Estadistica_Aplicada_2025
