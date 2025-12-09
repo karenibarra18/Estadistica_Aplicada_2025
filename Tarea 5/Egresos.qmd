@@ -1,0 +1,834 @@
+---
+title: "Análisis Estadístico de las Finanzas Públicas Estatales en México: Egresos"
+subtitle: "Estadística de Finanzas Públicas Estatales y Municipales (EFIPEM) 2013-2023"
+author: "Valtierra Ibarra Karen Lizbeth"
+format: 
+  html:
+    grid: 
+      body-width: 1000px
+editor: visual
+---
+
+```{r}
+#| code-fold: true
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(RColorBrewer)
+library(sf)          # Para datos espaciales
+library(viridis)     # Para paletas de colores
+library(DT)
+library(plotly)
+library(knitr)
+library(kableExtra)
+library(corrplot)
+library(broom)
+library(scales)
+library(multcomp)
+```
+
+## Introducción
+
+El análisis de los egresos estatales constituye una dimensión fundamental para comprender la gestión financiera de las entidades federativas en México. Mientras que los ingresos reflejan la capacidad de financiamiento, los egresos evidencian las prioridades de gasto, la eficiencia en la asignación de recursos y la orientación de las políticas públicas estatales. En el contexto del federalismo fiscal mexicano, los patrones de gasto estatal revelan no solo las necesidades de desarrollo regional, sino también los compromisos institucionales y las restricciones presupuestales que enfrentan los gobiernos locales.
+
+Este documento presenta un análisis exhaustivo de los egresos estatales durante el periodo 2013-2023, utilizando la metodología de la Estadística de Finanzas Públicas Estatales y Municipales (EFIPEM) del INEGI. Se examina la composición, distribución y tendencias temporales del gasto público estatal, con especial atención a las categorías principales que determinan la capacidad de los estados para proveer servicios públicos, impulsar el desarrollo económico y mantener la sostenibilidad fiscal.
+
+## Objetivos del Análisis
+
+1.  **Caracterizar la estructura** de los egresos estatales según la clasificación del INEGI.
+
+2.  **Identificar patrones geográficos** en la distribución del gasto público entre las entidades federativas.
+
+3.  **Analizar las tendencias temporales** de las principales categorías de egresos durante el periodo 2013-2023.
+
+4.  **Examinar las diferencias regionales** en la composición del gasto estatal.
+
+5.  **Evaluar correlaciones** entre diferentes tipos de egresos para identificar patrones de comportamiento fiscal.
+
+## Clasificación General de los Egresos Estatales
+
+Según la metodología establecida por el INEGI en la EFIPEM, los egresos de los estados mexicanos se organizan en categorías que reflejan la naturaleza económica del gasto y su destino funcional:
+
+# Estructura General de los Egresos
+
+-   **Gastos de Operación**: Servicios Personales, Materiales y Suministros, Servicios Generales, Subsidios, Transferencias y Asistencias, Otros Gastos de Operación. Gastos corrientes necesarios para el funcionamiento diario de la administración pública y la prestación de servicios.
+-   **Gastos de Inversión**: Obras Públicas, Bienes Muebles e Inmuebles, Inversiones Financieras y Otras Provisiones. Gastos destinados a crear, ampliar o mejorar la infraestructura y el patrimonio estatal.
+-   **Gastos Financieros**: Deuda Pública, Participaciones y Aportaciones. Gastos relacionados con el servicio de la deuda y transferencias obligatorias. **Otros Gastos**: Conceptos no clasificados en las categorías anteriores. Gastos diversos y extraordinarios.
+
+## Gastos de Operación
+
+Representan los recursos destinados al funcionamiento cotidiano del gobierno estatal e incluyen:
+
+-   **Servicios Personales:** Remuneraciones al personal, prestaciones y seguridad social.
+
+-   **Materiales y Suministros:** Adquisición de bienes consumibles para la operación gubernamental.
+
+-   **Servicios Generales:** Contratación de servicios profesionales, arrendamientos, mantenimiento.
+
+-   **Subsidios, Transferencias y Asistencias:** Apoyos económicos a personas, organizaciones y otros gobiernos.
+
+-   **Otros Gastos de Operación:** Gastos administrativos diversos.
+
+## Gastos de Inversión
+
+Constituyen los recursos destinados a la formación de capital y desarrollo de infraestructura:
+
+-   **Obras Públicas:** Construcción, rehabilitación y conservación de infraestructura física.
+
+-   **Bienes Muebles e Inmuebles:** Adquisición de equipamiento, mobiliario y propiedades.
+
+-   **Inversiones Financieras y Otras Provisiones:** Aportaciones a fondos y reservas.
+
+## Gastos Financieros
+
+Comprenden obligaciones derivadas de operaciones financieras:
+
+-   **Deuda Pública:** Intereses, comisiones y amortización de préstamos.
+
+-   **Participaciones y Aportaciones:** Transferencias obligatorias a municipios y otras entidades.
+
+```{r}
+#| code-fold: true
+#| message: false
+#| warning: false
+
+
+# Se identifican los archivos CSV en el directorio especificado
+data_sets <- list.files("./conjunto_de_datos", pattern = "*.csv", full.names = TRUE)
+
+# Se leen y combinan los archivos CSV en un solo data frame
+datos <- data_sets |> 
+  set_names(nm = data_sets) |> 
+  map_dfr(read_csv, .id = "source_file")
+
+# Convertir variables de tipo character a factor
+datos_factor <- datos |> 
+  dplyr::select(where(is.character)) |> 
+  names()
+
+datos <- datos |> 
+  mutate(across(all_of(datos_factor), as_factor))
+
+# Crear variables adicionales
+datos <- datos |> mutate(ANIO_factor = as_factor(ANIO), VALOR_millones = VALOR / 1e6)
+datos <- datos |> rename(CVE_ENT = ID_ENTIDAD)
+
+# Cargar datos de estados y unir con el conjunto de datos principal
+datos_estado <- read_csv("tc_entidad.csv")
+datos_estado <- datos_estado |> mutate(across(everything(), as_factor))
+datos_estado$ZONA <- factor(datos_estado$ZONA, levels = c("NORTE", "CENTRO", "SUR"))
+
+datos <- left_join(datos, datos_estado)
+
+# Eliminar columnas no necesarias
+datos <- datos |> dplyr::select(-source_file, -PROD_EST, -COBERTURA, -ESTATUS) 
+
+
+
+
+
+#glimpse(datos)
+
+nacional_estado <- st_read("data_nacional/00ent.shp", options = "ENCODING=LATIN1", quiet = TRUE)
+nacional_estado <- left_join(nacional_estado, datos_estado, by = "CVE_ENT")
+
+cat("Años disponibles:", paste(unique(datos$ANIO_factor), collapse = ", "), "\n")
+cat("Entidades incluidas:", length(unique(datos$CVE_ENT)), "\n")
+cat("Temas:", paste(unique(datos$TEMA), collapse = ", "), "\n")
+cat("Categorías:", paste(unique(datos$CATEGORIA), collapse = ", "), "\n\n")
+
+```
+
+## Análisis Exploratorio de Datos Egresos Nivel Capítulo
+
+## Estructura General de los Datos
+
+-   Dataset `egresos`: Filtrado para el tema "Egresos" y categoría "Capítulo". Se agrega porcentaje anual de cada capitulo.
+-   Dataset `egresos_agregados`: Agreado por año, estado y categoría principal con cálculos de porcentaje.
+-   Dataset `egresos_wide`: Transformando a formato ancho con valores y porcentajes por categoría principal.
+
+```{r}
+#| code-fold: true
+
+# Filtrar datos de egresos a nivel capítulo
+egresos <- datos |> filter(TEMA == "Egresos", CATEGORIA == "Capítulo")
+
+# Agregar porcentaje anual al dataset original
+egresos <- egresos |> 
+  group_by(ANIO, CVE_ENT, NOM_ENT) |> 
+  mutate(
+    valor_estado_anio = sum(VALOR_millones, na.rm = TRUE),
+    porcentaje_anual = (VALOR_millones / valor_estado_anio) * 100
+  ) |> 
+  ungroup()
+
+# Definir niveles de categoría para egresos
+niveles_categoria_egresos <- c("Servicios personales",
+                               "Materiales y suministros",
+                               "Servicios generales",
+                               "Transferencias, asignaciones, subsidios y otras ayudas",
+                               "Obras públicas y acciones sociales",
+                               "Bienes muebles, inmuebles e intangibles", "Inversión pública",
+                               "Inversiones financieras y otras provisiones", "Recursos asignados a municipios",
+                               "Otros egresos", 
+                               "Deuda pública", 
+                               "Disponibilidad final")
+
+egresos$DESCRIPCION_CATEGORIA <- factor(egresos$DESCRIPCION_CATEGORIA, 
+                                       levels = niveles_categoria_egresos)
+
+# Agregar columna de categorías principales para egresos
+egresos <- egresos |> 
+  mutate(
+    CATEGORIA_PRINCIPAL = case_when(
+      # Gasto Corriente
+      DESCRIPCION_CATEGORIA %in% c("Servicios personales", 
+                                   "Materiales y suministros",
+                                   "Servicios generales",
+                                   "Transferencias, asignaciones, subsidios y otras ayudas") ~ "Gasto Corriente",
+      
+      # Gasto Capital
+      DESCRIPCION_CATEGORIA %in% c("Obras públicas y acciones sociales",
+                                   "Bienes muebles, inmuebles e intangibles",
+                                   "Inversión pública",
+                                   "Inversiones financieras y otras provisiones") ~ "Gasto Capital",
+      
+      # Deuda Pública
+      DESCRIPCION_CATEGORIA %in% c("Deuda pública") ~ "Deuda Pública",
+      
+      # Otros Egresos
+      DESCRIPCION_CATEGORIA %in% c("Otros egresos", "Disponibilidad final") ~ "Otros Egresos"
+    ),
+    
+    # Convertir a factor con orden específico
+    CATEGORIA_PRINCIPAL = factor(CATEGORIA_PRINCIPAL, 
+                                levels = c("Gasto Corriente",
+                                           "Gasto Capital",
+                                           "Deuda Pública",
+                                           "Otros Egresos"))
+  )
+
+
+# Agregar datos por ANIO, Estado y CATEGORIA_PRINCIPAL con porcentajes
+egresos_agregados <- egresos |> 
+  group_by(ANIO, CVE_ENT, NOM_ENT, ABR_ENT, ZONA, CATEGORIA_PRINCIPAL, ANIO_factor) |> 
+  summarise(
+    VALOR = sum(VALOR, na.rm = TRUE),
+    VALOR_millones = sum(VALOR_millones, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  # Calcular porcentaje por estado y año
+  group_by(ANIO, CVE_ENT, NOM_ENT) |> 
+  mutate(
+    valor_estado_anio = sum(VALOR_millones, na.rm = TRUE),
+    porcentaje_anual = (VALOR_millones / valor_estado_anio) * 100
+  ) |> 
+  ungroup() |> 
+  # Reordenar columnas para mantener estructura similar
+  dplyr::select(
+    ANIO,
+    CVE_ENT, 
+    VALOR,
+    ANIO_factor,
+    VALOR_millones,
+    porcentaje_anual,
+    NOM_ENT,
+    ABR_ENT,
+    ZONA,
+    CATEGORIA_PRINCIPAL
+  )
+
+
+# Transformar a formato ancho con valor y porcentaje por categoría
+egresos_wide <- egresos_agregados |> 
+  dplyr::select(ANIO, CVE_ENT, ANIO_factor, NOM_ENT, ABR_ENT, ZONA, 
+         CATEGORIA_PRINCIPAL, VALOR_millones, porcentaje_anual) |> 
+  pivot_wider(
+    names_from = CATEGORIA_PRINCIPAL,
+    values_from = c(VALOR_millones, porcentaje_anual),
+    names_sep = "_"
+  ) |> 
+  rename_with(
+    ~ case_when(
+      .x == "VALOR_millones_Gasto Corriente" ~ "Gasto_Corriente_valor",
+      .x == "porcentaje_anual_Gasto Corriente" ~ "Gasto_Corriente_porcentaje",
+      .x == "VALOR_millones_Gasto Capital" ~ "Gasto_Capital_valor",
+      .x == "porcentaje_anual_Gasto Capital" ~ "Gasto_Capital_porcentaje",
+      .x == "VALOR_millones_Deuda Pública" ~ "Deuda_Publica_valor",
+      .x == "porcentaje_anual_Deuda Pública" ~ "Deuda_Publica_porcentaje",
+      .x == "VALOR_millones_Otros Egresos" ~ "Otros_Egresos_valor",
+      .x == "porcentaje_anual_Otros Egresos" ~ "Otros_Egresos_porcentaje",
+      TRUE ~ .x
+    )
+  ) |> 
+  # Reemplazar NA con 0 donde sea apropiado
+  mutate(
+    across(contains("_valor"), ~ replace_na(.x, 0)),
+    across(contains("_porcentaje"), ~ replace_na(.x, 0))
+  ) |> 
+  # Reordenar columnas
+  dplyr::select(
+    ANIO, CVE_ENT, ANIO_factor, NOM_ENT, ABR_ENT, ZONA,
+    Gasto_Corriente_valor, Gasto_Corriente_porcentaje,
+    Gasto_Capital_valor, Gasto_Capital_porcentaje,
+    Deuda_Publica_valor, Deuda_Publica_porcentaje,
+    Otros_Egresos_valor, Otros_Egresos_porcentaje
+  )
+
+
+cat("Capitulos presentes:", paste(levels(egresos$DESCRIPCION_CATEGORIA), collapse = ", \n"))
+
+# Tabla resumen  
+resumen_estructura <- egresos |> group_by(TEMA, CATEGORIA, ABR_ENT) |>
+  summarise(
+    registros = n(),
+    valor_total = sum(VALOR, na.rm = TRUE)/1e6,
+    .groups = "drop"
+  ) |>
+  arrange(TEMA, CATEGORIA, ABR_ENT)
+
+kable(resumen_estructura, col.names = c("Tema", "Categoría", "Entidad", "Registros", "Total (Miles Mill. MXN)"),
+      digits = 2, 
+      caption = "Estructura General de Egresos EFIPEM 2014-2023") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+La tabla anterior muestra la estructura básica de los datos de egresos estatales. Se incluyen 31 entidades federativas (excluyendo la Ciudad de México) con datos para el periodo 2013-2023. Cada registro corresponde a un capítulo de egresos por estado y año, permitiendo análisis desagregados tanto temporal como espacialmente.
+
+## Mapa de Agregado de Egresos por Estado (2013-2023)
+
+```{r}
+#| code-fold: true
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: "center"
+
+agregado_mapa_egresos <- resumen_estructura |> 
+  dplyr::select(ABR_ENT, valor_total)
+agregado_mapa_egresos <- left_join(nacional_estado, agregado_mapa_egresos, by = "ABR_ENT")
+
+
+mapa_egresos <- ggplot(agregado_mapa_egresos) +
+  geom_sf(aes(fill=valor_total), color = "gray50", size = 0.5) +
+  labs(
+    title = "Egresos totales por estado (2013-2023)",
+    subtitle = "Valores en miles de millones de MXN",
+    caption = "Fuente: INEGI - Finanzas Públicas",
+    fill = " "
+  ) +
+  scale_fill_viridis_c(labels = comma) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 10)
+  )
+  
+print(mapa_egresos)
+```
+
+Este mapa temático muestra cómo se distribuyen geográficamente los egresos estatales acumulados entre 2013 y 2023, donde los tonos más intensos representan mayores niveles de gasto público. Se observa una clara concentración del gasto en entidades con mayor población y actividad económica: el Estado de México encabeza la lista, seguido de Veracruz, Jalisco y Nuevo León, los cuales reúnen una parte importante de los recursos públicos por su peso económico y demográfico. En contraste, estados como Tlaxcala, Baja California Sur y Colima presentan montos considerablemente menores, lo que coincide con su menor población y dinamismo económico en comparación con las entidades de mayor tamaño.
+
+## Mapa sin el Estado de México
+
+```{r}
+#| code-fold: true
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: "center"
+mapa_egresos_sin_mex <- ggplot(agregado_mapa_egresos |> filter(ABR_ENT != "MEX")) +
+  geom_sf(aes(fill=valor_total), color = "gray50", size = 0.5) +
+  labs(
+    title = "Egresos totales por estado (2013-2023) - Sin Estado de México",
+    subtitle = "Valores en miles de millones de MXN",
+    caption = "Fuente: INEGI - Finanzas Públicas",
+    fill = " "
+  ) +
+  scale_fill_viridis_c(labels = comma) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 10)
+  )
+
+print(mapa_egresos_sin_mex)
+```
+
+Esta versión del mapa excluye al Estado de México para facilitar la visualización de las diferencias entre las demás entidades federativas. Al retirar a la entidad con mayor nivel de egresos, se aprecian con mayor nitidez las variaciones regionales en el gasto público, revelando una distribución más equilibrada entre los estados restantes. En este escenario, Veracruz, Jalisco y Nuevo León continúan destacando como los de mayores egresos, seguidos por Puebla, Chiapas y Oaxaca. Esta perspectiva resalta la importancia de considerar el peso económico y demográfico de las entidades más grandes al analizar la distribución del gasto estatal en México.
+
+## Composición de Egresos por Estado (2013-2023)
+
+```{r}
+#| code-fold: true
+#| fig-width: 10
+#| fig-height: 10
+#| fig-align: "center"
+# Calcular porcentajes de cada categoría por estado
+porcentajes_categoria_estado_egresos <- egresos |> 
+  group_by(NOM_ENT, ABR_ENT, DESCRIPCION_CATEGORIA) |> 
+  summarise(valor_categoria = sum(VALOR_millones, na.rm = TRUE), .groups = "drop") |> 
+  group_by(NOM_ENT, ABR_ENT) |> 
+  mutate(
+    total_estado = sum(valor_categoria),
+    porcentaje = (valor_categoria / total_estado) * 100
+  ) %>%
+  ungroup()
+
+# Con etiquetas de porcentaje (solo categorías >5%)
+graf_bar_egresos <- porcentajes_categoria_estado_egresos |> 
+  mutate(etiqueta = ifelse(porcentaje >= 5, 
+                          paste0(round(porcentaje, 1), "%"), 
+                          "")) |> 
+  ggplot(aes(x = reorder(ABR_ENT, total_estado), 
+             y = porcentaje, 
+             fill = DESCRIPCION_CATEGORIA)) +
+  geom_col(position = "stack") +
+  geom_text(aes(label = etiqueta), 
+            position = position_stack(vjust = 0.5),
+            size = 4, 
+            color = "white",
+            fontface = "bold") +
+  coord_flip() +
+  scale_fill_viridis_d(option = "turbo") +
+  labs(
+    title = "Composición de Egresos por Estado",
+    subtitle = "Porcentaje por categoría (etiquetas >5%)",
+    x = "Estado",
+    y = "Porcentaje (%)",
+    fill = "Categoría"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11)
+  ) +
+  guides(fill = guide_legend(nrow = 3, byrow = TRUE))
+
+graf_bar_egresos
+```
+
+La visualización muestra que, en la mayoría de los estados, una parte importante del presupuesto se destina a servicios personales, lo que refleja el peso que tiene la nómina pública dentro del gasto estatal. También se observa que las transferencias, asignaciones, subsidios y otras ayudas representan una porción relevante en varias entidades, lo que sugiere un enfoque en programas sociales y apoyos a distintos sectores. En conjunto, estos patrones permiten identificar la predominancia del gasto en personal, las variaciones en la inversión en obras públicas entre estados y las diferencias en la estructura del gasto, las cuales responden a distintas prioridades de desarrollo y formas de gestión pública.
+
+## Egresos por categoría (2013-2023)
+
+```{r}
+#| code-fold: true
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: "center"
+#| code-fold: true
+
+# Resumen por categoría principal
+resumen_principal <- egresos |> 
+  group_by(CATEGORIA_PRINCIPAL) |> 
+  summarise(
+    total_millones = sum(VALOR_millones, na.rm = TRUE),
+    .groups = "drop"
+  ) |> 
+  mutate(
+    participacion = total_millones / sum(total_millones) * 100,
+    total_billones = total_millones / 1e6
+  ) |> 
+  arrange(desc(total_millones))
+
+# Formato final de la tabla
+resumen_principal |> 
+  mutate(
+    `Monto (Millones MXN)` = format(round(total_millones, 0), big.mark = ",", scientific = FALSE),
+    `Monto (Billones MXN)` = format(round(total_billones, 2), nsmall = 2),
+    `Participación (%)` = format(round(participacion, 1), nsmall = 1)
+  ) |>
+  dplyr::select(
+    `Categoría Principal` = CATEGORIA_PRINCIPAL,
+    `Monto (Millones MXN)`,
+    `Monto (Billones MXN)`,
+    `Participación (%)`
+  ) |>
+  kable(
+    caption = "Distribución de Ingresos Estatales por Categoría Principal (2014–2023)",
+    align = c("l", "r", "r", "r")
+  ) |>
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    font_size = 12
+  ) |>
+  add_header_above(c(" " = 1, "Montos Totales" = 2, "Proporción" = 1))
+
+```
+
+El código agrupa los egresos por categoría principal, suma los montos y calcula qué porcentaje representa cada categoría del total. Luego convierte los valores a billones, formatea los números para una presentación más clara y organiza la información en una tabla con estilo, mostrando de forma ordenada los montos y su participación dentro del periodo 2014–2023.
+
+## Tendencias Temporales por Categoría Principal
+
+Gasto corriente
+
+```{r}
+#| code-fold: true
+
+graf_temp <- ggplot(
+  egresos_agregados |> filter(CATEGORIA_PRINCIPAL == "Gasto Corriente"),
+  aes(x = ANIO, y = VALOR_millones, color = ABR_ENT)
+) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = unique(egresos_agregados$ANIO)) +
+  labs(
+    title = "Tendencias del Gasto Corriente Estatal (2013-2023)",
+    x = "Año",
+    y = "Monto (Millones MXN)",
+    color = "Entidad"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom"
+  )
+
+ggplotly(graf_temp)
+
+```
+
+El comportamiento del gasto corriente muestra un crecimiento sostenido en la mayoría de los estados, lo que refleja mayores costos operativos y la ampliación de servicios públicos. Veracruz, Estado de México y Jalisco continúan entre las entidades que concentran los niveles más altos de este tipo de gasto.
+
+Gasto de capital
+
+```{r}
+#| code-fold: true
+#| message-warning: false
+
+graf_temp <- ggplot(
+  egresos_agregados |> filter(CATEGORIA_PRINCIPAL == "Gasto Capital"),
+  aes(x = ANIO, y = VALOR_millones, color = ABR_ENT)
+) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = unique(egresos_agregados$ANIO)) +
+  labs(
+    title = "Tendencias del Gasto de Capital Estatal (2013-2023)",
+    x = "Año",
+    y = "Monto (Millones MXN)",
+    color = "Entidad"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom"
+  )
+
+ggplotly(graf_temp)
+
+```
+
+El gasto de capital presenta una evolución más irregular. Estados como Jalisco y Nuevo León muestran incrementos constantes, señalando una mayor inversión en infraestructura. En otros casos, las variaciones abruptas podrían relacionarse con cambios en prioridades de obra pública o con restricciones presupuestarias.
+
+Deuda Pública
+
+```{r}
+#| code-fold: true
+
+graf_temp <- ggplot(
+  egresos_agregados |> filter(CATEGORIA_PRINCIPAL == "Deuda Pública"),
+  aes(x = ANIO, y = VALOR_millones, color = ABR_ENT)
+) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = unique(egresos_agregados$ANIO)) +
+  labs(
+    title = "Tendencias del Egreso por Deuda Pública (2013-2023)",
+    x = "Año",
+    y = "Monto (Millones MXN)",
+    color = "Entidad"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "bottom"
+  )
+
+ggplotly(graf_temp)
+
+```
+
+El egreso destinado a deuda pública se mantiene relativamente estable en varias entidades, sugiriendo un manejo cuidadoso del endeudamiento. En contraste, algunos estados incrementan estos montos, posiblemente para financiar proyectos o cubrir compromisos financieros de largo plazo.
+
+## Otros Gastos
+
+```{#| code-fold: true}
+#| fig-width: 10
+#| fig-height: 7
+#| fig-align: "center"
+
+otros_gastos <- egresos_agregados %>% 
+  filter(CATEGORIA_PRINCIPAL == "Otros Gastos") %>% 
+  mutate(ANIO = as.numeric(ANIO))
+
+grafico_otros <- ggplot(
+  otros_gastos,
+  aes(x = ANIO, y = VALOR_millones, color = ABR_ENT)
+) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(breaks = unique(otros_gastos$ANIO)) +
+  labs(
+    title = "Evolución de los Otros Gastos Estatales (2013-2023)",
+    x = "Año",
+    y = "Monto (Millones MXN)",
+    color = "Entidad"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 15, face = "bold"),
+    legend.position = "bottom",
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12)
+  )
+
+grafico_otros
+
+```
+
+## Composición de Egresos por Estado
+
+# Guanajuato
+
+```{r}
+#| code-fold: true
+#| fig-width: 10
+#| fig-height: 7
+#| fig-align: "center"
+
+ggplot(
+  egresos_agregados |> filter(ABR_ENT == "GTO"),
+  aes(
+    x = ANIO_factor,
+    y = porcentaje_anual,
+    fill = CATEGORIA_PRINCIPAL
+  )
+) +
+  geom_col(position = "stack") +
+  geom_text(
+    aes(
+      label = ifelse(
+        porcentaje_anual >= 5,
+        paste0(round(porcentaje_anual, 1), "%"),
+        ""
+      )
+    ),
+    position = position_stack(vjust = 0.5),
+    size = 4,
+    color = "white",
+    fontface = "bold"
+  ) +
+  coord_flip() +
+  scale_fill_viridis_d(option = "turbo") +
+  labs(
+    title = "Distribución de los Egresos en Guanajuato (2013-2023)",
+    subtitle = "Participación porcentual por categoría (solo se muestran valores superiores al 5%)",
+    x = "Año",
+    y = "Porcentaje",
+    fill = "Categoría de gasto"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    axis.text.x = element_text(size = 11),
+    axis.text.y = elemen
+
+```
+
+# Jalisco
+
+```{r}
+#| code-fold: true
+#| fig-width: 10
+#| fig-height: 7
+#| fig-align: "center"
+
+ggplot(
+  egresos_agregados |> filter(ABR_ENT == "JAL"),
+  aes(
+    x = ANIO_factor,
+    y = porcentaje_anual,
+    fill = CATEGORIA_PRINCIPAL
+  )
+) +
+  geom_col(position = "stack") +
+  geom_text(
+    aes(
+      label = ifelse(
+        porcentaje_anual >= 5,
+        paste0(round(porcentaje_anual, 1), "%"),
+        ""
+      )
+    ),
+    position = position_stack(vjust = 0.5),
+    size = 4,
+    color = "white",
+    fontface = "bold"
+  ) +
+  coord_flip() +
+  scale_fill_viridis_d(option = "turbo") +
+  labs(
+    title = "Distribución de los Egresos en Jalisco (2013-2023)",
+    subtitle = "Participación porcentual por tipo de gasto (solo se muestran valores mayores al 5%)",
+    x = "Año",
+    y = "Porcentaje",
+    fill = "Categoría del gasto"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11)
+  ) +
+  guides(fill = guide_legend(nrow = 3, byrow = TRUE))
+
+```
+
+## Análisis de Gastos de Operación
+
+A continuación se presenta un análisis de los Gastos de Operación como uno de los componentes centrales de los egresos estatales en México entre 2013 y 2023. Para comenzar, se utiliza un conjunto de diagramas de caja que permite visualizar cómo se distribuyen, en cada estado, los porcentajes anuales destinados a esta categoría.
+
+```{r}
+#| code-fold: true
+#| fig-width: 10
+#| fig-height: 7
+#| fig-align: "center"
+
+ggplot(
+  egresos_agregados |> 
+    filter(CATEGORIA_PRINCIPAL == "Gastos de Operación"),
+  aes(
+    x = reorder(ABR_ENT, porcentaje_anual, FUN = mean),
+    y = porcentaje_anual,
+    fill = ABR_ENT
+  )
+) +
+  geom_boxplot() +
+  scale_fill_viridis_d(option = "turbo") +
+  labs(
+    title = "Variación de los Gastos de Operación respecto al Total de Egresos (2013-2023)",
+    subtitle = "Distribución porcentual por entidad federativa",
+    x = "Entidad",
+    y = "Porcentaje (%)",
+    fill = "Entidad"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    legend.position = "none",
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11)
+  )
+
+```
+
+## Matriz de Correlación entre Categorías de Egresos
+
+```{r}
+#| code-fold: true
+#| fig-width: 12
+#| fig-height: 6
+#| fig-align: "center"
+
+# Mostrar columnas presentes en el data frame
+cat("Listado de columnas en egresos_wide:\n")
+print(names(egresos_wide))
+
+# Identificar variables potenciales para correlación
+cols_pct  <- grep("porcentaje", names(egresos_wide), value = TRUE, ignore.case = TRUE)
+cols_val  <- grep("valor", names(egresos_wide), value = TRUE, ignore.case = TRUE)
+
+cat("\nVariables de tipo porcentaje encontradas:", paste(cols_pct, collapse = ", "), "\n")
+cat("Variables de tipo valor encontradas:", paste(cols_val, collapse = ", "), "\n")
+
+# Preferencia: primero porcentajes, si no existen, usar valores monetarios
+if (length(cols_pct) > 0) {
+
+  datos_corr <- egresos_wide |>
+    dplyr::select(ANIO, all_of(cols_pct))
+
+  matriz_corr <- cor(datos_corr, use = "complete.obs")
+
+  corrplot(
+    matriz_corr,
+    method = "color",
+    type = "upper",
+    tl.col = "black",
+    tl.srt = 45,
+    tl.cex = 0.8,
+    addCoef.col = "black",
+    number.cex = 0.7,
+    title = "Matriz de Correlación: Proporción de Egresos por Entidad",
+    mar = c(0, 0, 2, 0)
+  )
+
+} else {
+
+  cat("No se hallaron variables de porcentaje. Se explorarán columnas de valor.\n")
+
+  if (length(cols_val) > 0) {
+
+    datos_corr <- egresos_wide |>
+      dplyr::select(ANIO, all_of(cols_val))
+
+    matriz_corr <- cor(datos_corr, use = "complete.obs")
+
+    corrplot(
+      matriz_corr,
+      method = "color",
+      type = "upper",
+      tl.col = "black",
+      tl.srt = 45,
+      tl.cex = 0.8,
+      addCoef.col = "black",
+      number.cex = 0.7,
+      title = "Matriz de Correlación: Egresos Estatales en Millones de MXN",
+      mar = c(0, 0, 2, 0)
+    )
+  }
+}
+
+```
+
+## Concluciones
+
+El estudio sobre los egresos estatales permite identificar diversos comportamientos clave en la administración financiera de las entidades federativas en México entre 2013 y 2023:
+
+**Estructura del Gasto:** La mayor parte del presupuesto estatal se concentra en los gastos operativos. En segundo lugar se ubican las inversiones públicas, mientras que los compromisos financieros representan una fracción menor del total.
+
+**Variación entre Estados:** La forma en que cada estado distribuye sus recursos no es homogénea. Algunas entidades destinan una proporción más alta a servicios personales, mientras que otras priorizan proyectos de inversión o infraestructura.
+
+**Cambios a lo Largo del Tiempo:** Las categorías de gasto muestran trayectorias distintas a lo largo del periodo analizado. En algunos años se observan picos o caídas asociadas a contextos económicos o decisiones del ciclo gubernamental.
+
+**Situación Financiera:** Al evaluar ingresos frente a egresos, se aprecia que muchos estados logran mantener cierta estabilidad fiscal. No obstante, existen casos donde persisten superávits o déficits que podrían requerir análisis adicional.
+
+**Relaciones entre Rubros:** Las correlaciones identificadas evidencian vínculos entre ciertos tipos de gasto, lo que apunta a estrategias presupuestales interrelacionadas o ajustes en respuesta a otros rubros.
+
+En conjunto, los resultados ofrecen una visión clara de cómo se comporta el gasto público estatal en México y constituyen un insumo valioso para investigaciones orientadas a evaluar la eficiencia del uso de recursos y la sostenibilidad de las finanzas públicas.
